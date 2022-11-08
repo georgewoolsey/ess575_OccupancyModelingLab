@@ -1,0 +1,415 @@
+---
+title: "ESS 575: Occupancy Modeling Lab"
+author: "Team England" 
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+linkcolor: blue
+header-includes:
+  - \usepackage{caption}
+  - \captionsetup[figure]{labelformat=empty}
+editor_options: 
+  chunk_output_type: console
+knit: (function(inputFile, encoding){ 
+    out_dir <- '../';
+    rmarkdown::render(inputFile, encoding = encoding, output_file=file.path(dirname(inputFile), out_dir, 'OccupancyModelingLab_England.pdf')) 
+  })
+---
+
+Team England:
+
+  - Caroline Blommel
+  - Carolyn Coyle
+  - Bryn Crosby
+  - George Woolsey
+  
+cblommel@mail.colostate.edu, carolynm@mail.colostate.edu, brcrosby@rams.colostate.edu, george.woolsey@colostate.edu
+
+```{r setup, include=F}
+# knit options
+knitr::opts_chunk$set(
+  echo = TRUE
+  , warning = FALSE
+  , message = FALSE
+  , fig.height = 5
+  , fig.width = 7
+  , eval = TRUE
+  , fig.align='center'
+)
+```
+
+\newpage
+
+# Motivation
+
+Modeling presence or absence is a classic problem involving mixture models, specifically random variables that are zero-inflated. Extra zeros are encountered when we model presence or absence because zeros arise from two conditions: truly absent individuals and individuals present but undetected. This means we need a model for the process that controls occupancy, the true state, and model of the data that accounts for detection. This is often our starting point in Bayesian analysis – there is a true, unobserved state we seek to understand using a model of a process. We take imperfect observations on that state and must correct them using a model of the data.
+
+## R libraries needed for this lab
+
+You need to load the following libraries. Set the seed to 10 to compare your answers to ours.
+ 
+```{r, eval=T}
+# bread-and-butter
+library(tidyverse)
+library(lubridate)
+library(viridis)
+library(scales)
+library(latex2exp)
+# visualization
+library(cowplot)
+library(kableExtra)
+# jags and bayesian
+library(rjags)
+library(MCMCvis)
+library(HDInterval)
+library(BayesNSF)
+#set seed
+set.seed(10)
+```
+ 
+\newpage
+
+# Problem
+
+A fundamental question in landscape ecology seeks to understand how landscape structure shapes variation in habitat use by species. We will use data from the Swiss Survey of Common Breeding Birds, courtesy of Royle and Dorazio (2008), to model habitat occupancy by a resident bird in the Swiss Alps, the willow tit (*Parus montanus*). The data come from annual surveys of one km^2^ quadrats distributed across Switzerland (Fig. 1). Surveys are conducted during the breeding season on three separate days, but some quadrats have missing data so that the number of replicate observations is fewer than three.
+
+During each survey, an observer records every visual or acoustic detection of a breeding species (we do not differentiate between these two types of detection in this problem) and marks its location using a global positioning system or, in earlier years, a paper map. We assume that the true state (occupied or unoccupied) does not change among sample dates, an assumption known as closure. This assumption is reasonable because we are observing a resident species during the breeding season.
+
+
+```{r, echo=FALSE, out.width="75%", out.height="75%", fig.cap="", fig.align='center'}
+knitr::include_graphics("../data/willowtit.jpg")
+```
+
+**Fig. 1.** The willow tit (left, credit: Francis C. Franklin) is one of 70 bird species that are surveyed annually for abundance in 267 1 km^2^ sampling units distributed across Switzerland (right, credit: the Swiss Ornithological Institute).
+
+We want to understand the influence of forest cover and elevation on the distribution of the willow tit. The data frame `BayesNSF::SwissBirds` has the number of times a quadrat (`quadrat`) was searched (`numberVisits`) and the number of times willow tits were detected (`numberDetections`). We have covariates on forest canopy cover (`forestCover`) as well as elevation in meters (`elevation`) for each quadrat surveyed. Data on detection each day on each quadrat (0 or 1) are also available. Develop a model of the influence of forest cover and elevation on the distribution of willow tits. Your model should allow estimation of the optimum elevation of willow tit habitat at the mean forest cover, where optimum elevation is defined as the elevation where probability of occupancy is maximum.
+
+# Question 1
+
+Diagram the network of knowns and unknowns.
+
+# Question 2
+
+Write a mathematical expression for the posterior and the joint distribution.
+
+# Question 3
+
+Modify your model to include the effect of search time and wind speed (measured at each quadrat on each day) on detection probability. Draw a DAG and write the posterior and joint distributions. In so doing, assume that posterior predictive checks of a preliminary detection model revealed that you need to include an explicit variance term for the detection probability.
+
+# Question 4
+
+Approximate the marginal posterior distributions of parameters in the forest and elevation model with constant detection probability (the first one, above) using JAGS. Conduct posterior predictive checks. Some hints: 1) You will need to standardize the covariates by subtracting the mean and dividing by the standard deviation for each observation in the elevation and forest cover data. Use the `scale` function to do this (it will drastically speed convergence). 2) You *must* give initial values of 1 to all unknown 0 or 1 $z$ states.
+
+# Question 5
+
+Summarize the parameters and check chains for convergence. Exclude the predictions of $\psi$ from the summary if they were included in the coda object. What can you conclude about model fit?
+
+# Question 5
+
+What can you conclude about the relative importance of elevation and forest cover in controlling the bird’s distribution? Plot the median probability of occupancy and the 95% highest posterior density interval as a function of elevation at the mean of forest cover. Find the optimum elevation of willow tit habitat at the mean forest cover, where optimum elevation is defined as the elevation where probability of occupancy is maximum. Plot a normalized histogram of MCMC output for the optimum elevation at the average forest cover. Overlay 0.95 highest posterior density limits on the optimum elevation.
+
+\newpage
+
+
+$$
+\begin{align*}
+\mu_{i} &= \gamma x_{i}^{\beta}\\
+\alpha &= \log \bigl(\gamma \bigr)\\
+\log \bigl(\mu_{i} \bigr)  &= \alpha+\beta \bigl(\log(x_i) \bigr)\\
+g \bigl(\alpha,\beta,\log(x_i) \bigr)  &= \alpha + \beta \bigl(\log(x_i) \bigr) \\
+\end{align*}
+$$
+
+### Question 1 
+
+Interpret the coefficients $\alpha$, $\beta$, and $\gamma$ in this model.
+
+\textcolor{violet}{We are interested in modelling $\textrm{N} _2 \textrm{O}$ emission as a function of soil carbon content, fertilizer addition, and fertilizer type. We begin by ignoring the data on soil carbon and fertilizer type. In addition, we initially ignore site-level variations by pooling the data from different sites (i.e. a pooled model). In the model $\mu_{i} = \gamma x_{i}^{\beta}$, $\gamma$ is the baseline scale factor for the fertilizer addition rate ($x_{i}$) impact to $\textrm{N} _2 \textrm{O}$ emission. The exponent $\beta$ allows for the influence of fertilizer input on $\textrm{N} _2 \textrm{O}$ emission to vary with the rate of fertilizer input. Exponential regression models are used to model situations in which growth/change begins slowly and then accelerates rapidly without bound, or where decay begins rapidly and then slows down to get closer and closer to zero. The transformation $\alpha = \log(\gamma)$ allows for linear representation of the deterministic model.}
+
+### Question 2
+
+Draw a Bayesian network for a linear regression model of $\textrm{N} _2 \textrm{O}$ emission ($y_{i}$) on fertilizer addition ($x_{i}$).
+
+```{r, echo=FALSE, out.width="50%", out.height="50%", fig.cap="DAG", fig.align='center'}
+knitr::include_graphics("../data/DAG1.jpg")
+```
+
+### Question 3
+
+Write out the joint distribution for a linear regression model of $\textrm{N} _2 \textrm{O}$ emission ($y_{i}$) on fertilizer addition ($x_{i}$). Start by using generic `[ ]`. Use $\sigma^{2}$ to represent the uncertainty in your model realizing that you might need moment matching when you choose a specific distribution. 
+
+$$
+\bigl[ \alpha,\beta,\sigma^2 \mid y_i\bigr] \propto \prod_{i=1}^{n} \bigl[ \log(y_{i}) \mid g \bigl( \alpha, \beta, \log(x_i)  \bigr), \sigma^{2}\bigr][\alpha]\bigl[ \beta\bigr]\bigl[ \sigma \bigr]
+$$
+
+### Question 4
+
+Finish by choosing specific distributions for likelihoods and priors. You will use the math in the answer as a template to code your model in the subsequent exercises. What are assuming about the distribution of the untransformed $\mu_i$? 
+
+
+$$
+\bigl[ \alpha,\beta,\sigma^2 \mid y_i\bigr] \propto \prod_{i=1}^{n} {\sf normal} \bigr( \log(y_{i}) \mid g \bigl( \alpha, \beta, \log(x_i)  \bigr), \sigma^{2}\bigr) \times {\sf normal} \bigr(\alpha \mid 0,10000\bigr)  \times {\sf normal} \bigr(\beta \mid 0,10000\bigr) \times {\sf uniform}\bigr(\sigma \mid 0, 100 \bigl)
+$$
+
+### Question 5
+
+What is the hypothesis represented by this model?
+
+\textcolor{violet}{We are ignoring site-level variations by pooling the data from different sites (i.e. a pooled model). This means that we are assuming that the emissions response to nitrogen addition does not vary across sites. In this pooled model, we are allowing $\textrm{N} _2 \textrm{O}$ emission to increase exponentially with fertilizer application rate.}
+
+## Visualizing the pooled data
+
+It is always a good idea to look at the data. Examine the head of the data frame for emissions. Note that the columns `group.index` and `fert.index` contain indices for sites and fertilizer types. We are going to ignore these for now since the pooled model does not take these into account. Use the code below to plot $\textrm{N} _2 \textrm{O}$ emissions as a function of fertilizer input for both the logged and unlogged data. 
+
+```{r}
+# view the first few rows of data
+BayesNSF::N2OEmission %>% 
+  head()
+# data structure
+BayesNSF::N2OEmission %>% 
+  dplyr::glimpse()
+```
+
+We are going to use `ggplot` to visualize the data in this lab. If you are unfamiliar with this package, don't worry. We will provide you will all the codes you need and help your get oriented. We think you will find the plotting functions in `ggplot` very powerful and intuitive. We start by using `ggplot` to load the data frame we will plot data from. Then we add `geom_point` and use the `aes` argument (the aesthetic mappings) to define the x and y values for the points. All `ggplot` functions require you to define the aesthetic mappings as needed. Here, they are the same as setting x and y in the normal plot functions. The other big difference is that `ggplot` allows you to add successive layers to the plot using the `+` operator. You will see later on that this offers a lot of flexibility. We add the `geom_line` feature and then set the theme to `minimal`. Lastly, we use the `grid.arrange` function to position multiple plots at once. This is similar to using `mfrow` with `par`.
+
+```{r}
+# untransformed
+g1 <- ggplot(data = BayesNSF::N2OEmission) +
+  geom_point(
+    mapping = aes(y = emission, x = n.input)
+    , alpha = 3/10
+    , shape = 21
+    , colour = "black"
+    , fill = "brown"
+    , size = 3
+  ) +
+  theme_minimal()
+# log transformed
+g2 <- ggplot(data = BayesNSF::N2OEmission) +
+  geom_point(
+    mapping = aes(y = log(emission), x = log(n.input))
+    , alpha = 3/10
+    , shape = 21
+    , colour = "black"
+    , fill = "brown"
+    , size = 3
+  ) +
+  theme_minimal() 
+# plot side by side
+gridExtra::grid.arrange(g1, g2, nrow = 1)
+```
+
+### Fitting the pooled model with JAGS
+
+You will now write a simple, pooled model where you gloss over differences in sites and fertilizer types and lump everything into a set of $x$ and $y$ pairs using the R template provided below. It is imperative that you study the data statement and match the variable names in your JAGS code to the left hand side of the = in the data list. Call the intercept `alpha`, the slope `beta` and use `sigma` to name the standard deviation in the likelihood. Also notice, that we center the nitrogen input covariate to speed convergence. You could also standardize this as well.
+
+In addition to fitting this model, we would like you to have JAGS predict the mean logged $\textrm{N} _2 \textrm{O}$ emissions and the median unlogged $\textrm{N} _2 \textrm{O}$ emissions as a function of soil fertilizer input. (Why median? Hint: think back to the distribution of the untransformed data above in question 3 above). To help you out we have provided the range of $\textrm{N} _2 \textrm{O}$ values to predict over as the third element in the `data` list. Make sure you understand how we chose these values.
+
+Note that in this problem and the ones that follow we have set up the data and the initial conditions for you. This will save time and frustration, allowing you to concentrate on writing code for the model but you must pay attention to the names we give in the `data` and `inits` lists.  These must agree with the variable names in your model. Please see any of the course instructors if there is anything that you don't understand about these lists.
+
+```{r}
+n.input.pred <- seq(min(BayesNSF::N2OEmission$n.input), max(BayesNSF::N2OEmission$n.input), 10)
+
+data = list(
+  log.emission = log(BayesNSF::N2OEmission$emission) %>% 
+      as.double()
+  , log.n.input.centered = log(BayesNSF::N2OEmission$n.input) - 
+      mean(log(BayesNSF::N2OEmission$n.input)) %>% 
+        as.double()
+  , log.n.input.centered.pred = log(n.input.pred) - 
+      mean(log(BayesNSF::N2OEmission$n.input)) %>% 
+        as.double()
+)
+
+inits = list(
+  list(alpha = 0, beta = .5, sigma = 50)
+  , list(alpha = 1, beta = 1.5, sigma = 10)
+  , list(alpha = 2, beta = .75, sigma = 20)
+)
+```
+
+### Question 6
+
+Write the code for the model. Compile the model and execute the MCMC to produce a coda object. Produce trace plots of the chains for model parameters. Produce a summary table and caterpillar plot for the parameters and tests for convergence including the effective sample size.
+
+#### JAGS Model
+
+```{r, eval=FALSE}
+## JAGS Model
+model{
+  
+  # priors
+  alpha ~ dnorm(0,1E-6)
+  beta ~ dnorm(0,1E-6)
+  sigma ~ dunif(0,100)
+  tau <- 1/sigma^2
+
+  # likelihood
+  for (i in 1:length(log.emission)) {
+    log_mu[i] <- alpha + beta * log.n.input.centered[i]
+    log.emission[i] ~ dnorm(log_mu[i], tau)
+  }
+
+  ## quantities of interest
+    # predicted emissions
+    for (j in 1:length(log.n.input.centered.pred)) {
+      log_mu_pred[j] <- alpha + beta * log.n.input.centered.pred[j]
+      mu_pred[j] <- exp(log_mu_pred[j])
+    }
+}
+```
+
+#### Implement JAGS Model
+
+```{r}
+##################################################################
+# insert JAGS model code into an R script
+##################################################################
+{ # Extra bracket needed only for R markdown files - see answers
+  sink("NO2JAGS_pooled.R") # This is the file name for the jags code
+  cat("
+  model{
+      # priors
+      alpha ~ dnorm(0,1E-6)
+      beta ~ dnorm(0,1E-6)
+      sigma ~ dunif(0,100)
+      tau <- 1/sigma^2
+    
+      # likelihood
+      for (i in 1:length(log.emission)) {
+        log_mu[i] <- alpha + beta * log.n.input.centered[i]
+        log.emission[i] ~ dnorm(log_mu[i], tau)
+      }
+    
+      ## quantities of interest
+        # predicted emissions
+        for (j in 1:length(log.n.input.centered.pred)) {
+          log_mu_pred[j] <- alpha + beta * log.n.input.centered.pred[j]
+          mu_pred[j] <- exp(log_mu_pred[j])
+        }
+  }
+  ", fill = TRUE)
+  sink()
+}
+################################################################
+# implement model
+##################################################################
+# specify 3 scalars, n.adapt, n.update, and n.iter
+# n.adapt = number of iterations that JAGS will use to choose the sampler 
+  # and to assure optimum mixing of the MCMC chain
+n.adapt = 2000
+# n.update = number of iterations that will be discarded to allow the chain to 
+#   converge before iterations are stored (aka, burn-in)
+n.update = 10000
+# n.iter = number of iterations that will be stored in the 
+  # final chain as samples from the posterior distribution
+n.iter = 10000
+######################
+# Call to JAGS
+######################
+jm = rjags::jags.model(
+  file = "NO2JAGS_pooled.R"
+  , data = data
+  , inits = inits
+  , n.chains = length(inits)
+  , n.adapt = n.adapt
+)
+stats::update(jm, n.iter = n.update)
+# save the coda object (more precisely, an mcmc.list object) to R as "zc"
+zc_pooled = rjags::coda.samples(
+  model = jm
+  , variable.names = c("alpha", "beta", "sigma", "tau", "log_mu_pred", "mu_pred")
+  # , variable.names = c("a", "b", "p")
+  , n.iter = n.iter
+  , n.thin = 1
+)
+```
+
+#### Model Output
+
+Produce trace plots of the chains for model parameters. Produce a summary table and caterpillar plot for the parameters and tests for convergence including the effective sample size.
+
+```{r}
+#####################
+# check output
+#####################
+# trace plot
+MCMCvis::MCMCtrace(zc_pooled, params = c("alpha", "beta", "sigma"), pdf = FALSE)
+# summary
+MCMCvis::MCMCsummary(zc_pooled, params = c("alpha", "beta", "sigma"))
+# Caterpillar plots
+MCMCvis::MCMCplot(zc_pooled, params = c("alpha", "beta", "sigma"))
+```
+
+```{r, echo=FALSE, eval=FALSE}
+# Heidelberger and Welch diagnostic
+coda::heidel.diag(zc_pooled)
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+remove(list = ls()[grep("_pth",ls())])
+gc()
+```
+
+## Visualizing the pooled model predictions
+
+Let's overlay the predicted mean logged $\textrm{N} _2 \textrm{O}$ emissions and median unlogged $\textrm{N} _2 \textrm{O}$ emissions as a function of soil fertilizer input from the pooled model on top of the raw data. We summarize the predictions using `MCMCpstr()` twice - once to get the 95% HDPI intervals and a second time to get the posterior median for each fertilizer input value. We combine these predictions into two data frames, one for the logged $\textrm{N} _2 \textrm{O}$ emissions and one for untransformed $\textrm{N} _2 \textrm{O}$ emissions. We append our new graphical elements onto our old plots with the `+` operator. We plot the median of the posterior distribution as a black line with `geom_line()` and the 95% credible intervals as a yellow shaded region using the `geom_ribbon()` function. These data come from a different data frame than the one we used to plot the raw data so we need to add the `data` argument in the new `geom_line` and `geom_ribbon`. Again, we provide you with the code to do this to save time. You will need to modify this code to make similar plots for models you fit in later exercises.
+
+```{r}
+# highest posterior density interval of predictions
+pred1 <- MCMCvis::MCMCpstr(
+  zc_pooled
+  , params = c("mu_pred", "log_mu_pred")
+  , func = function(x) HDInterval::hdi(x, .95)
+)
+# median of predictions
+pred2 <- MCMCvis::MCMCpstr(
+  zc_pooled
+  , params = c("mu_pred", "log_mu_pred")
+  , func = median
+)
+# put in data frame
+pred.po.df <- dplyr::bind_cols(
+  n.input.pred
+  , data.frame(pred1$mu_pred)
+  , median = pred2$mu_pred
+)
+lpred.po.df <- dplyr::bind_cols(
+  log.n.input.pred = log(n.input.pred)
+  , data.frame(pred1$log_mu_pred)
+  , median = pred2$log_mu_pred
+)
+```
+
+Plot the predictions
+
+```{r}
+g3 <- g1 +
+  geom_line(
+    data = pred.po.df
+    , mapping = aes(x = n.input.pred, y = median)
+  ) +
+  geom_ribbon(
+    data = pred.po.df
+    , mapping = aes(x = n.input.pred, ymin = lower, ymax = upper)
+    , alpha = 0.2
+    , fill = "yellow"
+  )
+
+g4 <- g2 +
+  geom_line(
+    data = lpred.po.df
+    , mapping = aes(x = log.n.input.pred, y = median)
+  ) +
+  geom_ribbon(
+    data = lpred.po.df
+    , mapping = aes(x = log.n.input.pred, ymin = lower, ymax = upper)
+    , alpha = 0.2
+    , fill = "yellow"
+  )
+
+gridExtra::grid.arrange(g3, g4, nrow = 1)
+```
+
