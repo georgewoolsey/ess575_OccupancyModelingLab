@@ -182,6 +182,7 @@ elevation_pred <- seq(
   )
   , 10
 )
+# standardize
 elevation_pred_z <- (elevation_pred - mean_elevation) / sd_elevation
 
 # list of data
@@ -193,6 +194,8 @@ data = list(
   , n = as.double(BayesNSF::SwissBirds$numberVisits)
   , mean_elevation = mean_elevation
   , sd_elevation = sd_elevation
+  , mean_forestCover = mean(BayesNSF::SwissBirds$forestCover)
+  , elevation_pred_z = elevation_pred_z %>% as.double()
 )
 ```
 
@@ -211,21 +214,37 @@ model{
   p ~ dunif(0, 1)
   # likelihood
   for(i in 1:N){
-    # deterministic model
+    # Deterministic model of z (the true probability of occupancy)
     psi[i] <- ilogit(
        b0
        + b1*elevation[i]
        + b2*(elevation[i]^2)
        + b3*forestCover[i]
     )
-    # Deterministic model of z (the true probability of occupancy)
+    # likelihood
       z[i] ~ dbern(psi[i])
     # likelihood
       # Stochastic model of y (the observed detections)
       y[i] ~ dbin(z[i] * p, n[i])
       y_sim[i]  ~ dbin(z[i] * p, n[i])
+    # sum of squares 
+      sq[i] <- (y[i]-psi[i])^2
+      sq_sim[i] <- (y_sim[i]-psi[i])^2
   }
   # Derived quantities
+    #posterior predictive checks
+      # test statistics y
+      mean_y <- mean(y)
+      sd_y <- sd(y)
+      fit_y <- sum(sq)
+      # test statistics y_sim
+      mean_y_sim <- mean(y_sim)
+      sd_y_sim <- sd(y_sim)
+      fit_y_sim <- sum(sq_sim)
+      # p-values
+      p_val_mean <- step(mean_y_sim - mean_y)
+      p_val_sd <- step(sd_y_sim - sd_y)
+      p_val_fit <- step(fit_y_sim - fit_y)
     # optimum elevation of willow tit habitat at the mean forest cover
       # ... where optimum elevation is defined as the elevation 
       # ... where probability of occupancy is maximum.
@@ -233,21 +252,15 @@ model{
       # x-value of the vertex of the parabola = -b/2a 
       optimum_elev_z = -b1/(2*b2)
       optimum_elev = (optimum_elev_z * sd_elevation) + mean_elevation
-    #posterior predictive checks
-      mean_y = mean(y)
-      sd_y = sd(y)
-      mean_y_sim = mean(y_sim)
-      sd_y_sim = sd(y_sim)
-      p_val_mean = step(mean_y_sim - mean_y)
-      p_val_sd = step(sd_y_sim - sd_y)
-    # sum of squares 
-      for(j in 1:N) {
-        sq[j] <- (y[j]-psi[j])^2
-        sq_sim[j] <- (y_sim[j]-psi[j])^2
+      # The predicted probability of occupancy
+      for(j in 1:length(elevation_pred_z)){
+        p_est[j] <- ilogit(
+             b0
+             + b1*elevation_pred_z[j]
+             + b2*(elevation_pred_z[j]^2)
+             # + b3*mean_forestCover
+          )
       }
-      fit_y <- sum(sq)
-      fit_y_sim <- sum(sq_sim)
-      p_val_fit = step(fit_y_sim - fit_y)
 }
 ```
 
@@ -269,36 +282,53 @@ model{
     p ~ dunif(0, 1)
     # likelihood
     for(i in 1:N){
-      # deterministic model
+      # Deterministic model of z (the true probability of occupancy)
       psi[i] <- ilogit(
          b0
          + b1*elevation[i]
          + b2*(elevation[i]^2)
          + b3*forestCover[i]
       )
-      # Deterministic model of z (the true probability of occupancy)
+      # likelihood
         z[i] ~ dbern(psi[i])
       # likelihood
         # Stochastic model of y (the observed detections)
         y[i] ~ dbin(z[i] * p, n[i])
         y_sim[i]  ~ dbin(z[i] * p, n[i])
+      # sum of squares 
+        sq[i] <- (y[i]-psi[i])^2
+        sq_sim[i] <- (y_sim[i]-psi[i])^2
     }
     # Derived quantities
       #posterior predictive checks
-        mean_y = mean(y)
-        sd_y = sd(y)
-        mean_y_sim = mean(y_sim)
-        sd_y_sim = sd(y_sim)
-        p_val_mean = step(mean_y_sim - mean_y)
-        p_val_sd = step(sd_y_sim - sd_y)
-      # sum of squares 
-        for(j in 1:N) {
-          sq[j] <- (y[j]-psi[j])^2
-          sq_sim[j] <- (y_sim[j]-psi[j])^2
-        }
+        # test statistics y
+        mean_y <- mean(y)
+        sd_y <- sd(y)
         fit_y <- sum(sq)
+        # test statistics y_sim
+        mean_y_sim <- mean(y_sim)
+        sd_y_sim <- sd(y_sim)
         fit_y_sim <- sum(sq_sim)
-        p_val_fit = step(fit_y_sim - fit_y)
+        # p-values
+        p_val_mean <- step(mean_y_sim - mean_y)
+        p_val_sd <- step(sd_y_sim - sd_y)
+        p_val_fit <- step(fit_y_sim - fit_y)
+      # optimum elevation of willow tit habitat at the mean forest cover
+        # ... where optimum elevation is defined as the elevation 
+        # ... where probability of occupancy is maximum.
+        # f(x) = ax^2 + bx + c
+        # x-value of the vertex of the parabola = -b/2a 
+        optimum_elev_z = -b1/(2*b2)
+        optimum_elev = (optimum_elev_z * sd_elevation) + mean_elevation
+        # The predicted probability of occupancy
+        for(j in 1:length(elevation_pred_z)){
+          p_est[j] <- ilogit(
+               b0
+               + b1*elevation_pred_z[j]
+               + b2*(elevation_pred_z[j]^2)
+               # + b3*mean_forestCover
+            )
+        }
   }
   ", fill = TRUE)
   sink()
@@ -358,56 +388,253 @@ stats::update(jm, n.iter = n.update, progress.bar = "none")
 zm = rjags::coda.samples(
   model = jm
   , variable.names = c(
+      # parameters
       "b0"
       , "b1"
       , "b2"
       , "b3"
+      , "p"
+      # test statistics
       , "mean_y"
       , "sd_y"
+      , "fit_y"
       , "mean_y_sim"
       , "sd_y_sim"
+      , "fit_y_sim"
+      # p-values
       , "p_val_mean"
       , "p_val_sd"
-      , "fit_y"
-      , "fit_y_sim"
       , "p_val_fit"
+      # derived quantities
+      , "optimum_elev"
+      , "p_est"
     )
   , n.iter = n.iter
   , n.thin = 1
   , progress.bar = "none"
 )
-#####################
-# check output
-#####################
-# summary
-MCMCvis::MCMCsummary(zm, params = c(
-      "b0"
-      , "b1"
-      , "b2"
-      , "b3"
-      , "mean_y"
-      , "mean_y_sim"
-      , "p_val_mean"
-      , "sd_y"
-      , "sd_y_sim"
-      , "p_val_sd"
-      , "fit_y"
-      , "fit_y_sim"
-      , "p_val_fit"
-    )
-  )
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+remove(list = ls()[grep("_temp",ls())])
+gc()
 ```
 
 # Question 5
 
 Summarize the parameters and check chains for convergence. Exclude the predictions of $\psi$ from the summary if they were included in the coda object. What can you conclude about model fit?
 
+## Trace plots
+
 ```{r}
-# asdf
+# trace plot
+MCMCvis::MCMCtrace(zm, params = c(
+    # parameters
+    "b0"
+    , "b1"
+    , "b2"
+    , "b3"
+    , "p"
+    # p-values
+    , "p_val_mean"
+    , "p_val_sd"
+    , "p_val_fit"
+    # derived quantities
+    , "optimum_elev"
+  )
+  , pdf = FALSE
+)
 ```
 
+## Posterior predictive check - Test Statistics
+
+```{r}
+# summary
+MCMCvis::MCMCsummary(zm, params = c(
+      # test statistics
+      "mean_y"
+      , "mean_y_sim"
+      , "sd_y"
+      , "sd_y_sim"
+      , "fit_y"
+      , "fit_y_sim"
+    )
+    , n.eff = FALSE
+  )
+```
+
+## Posterior predictive check - p-values
+
+```{r}
+# summary
+MCMCvis::MCMCsummary(zm, params = c(
+      # p-values
+      "p_val_mean"
+      , "p_val_sd"
+      , "p_val_fit"
+    )
+  )
+```
+
+## Estimates of the $\boldsymbol{\beta}$ and detection probability $p$
+
+```{r}
+# summary
+MCMCvis::MCMCsummary(zm, params = c("b0", "b1", "b2", "b3", "p"))
+```
+
+
+## Caterpillar plot for the  $\boldsymbol{\beta}$ and detection probability $p$
+
+```{r}
+# Caterpillar plots
+MCMCvis::MCMCplot(
+  zm
+  , params = c("b0", "b1", "b2", "b3", "p")
+  , horiz = TRUE
+  # , ylim = c(-6,5)
+)
+
+```
+
+What can you conclude about model fit?
+
+\textcolor{violet}{fill this in !!!!!!!!!!!!!}
 
 # Question 6
 
 What can you conclude about the relative importance of elevation and forest cover in controlling the bird’s distribution? Plot the median probability of occupancy and the 95% highest posterior density interval as a function of elevation at the mean of forest cover. Find the optimum elevation of willow tit habitat at the mean forest cover, where optimum elevation is defined as the elevation where probability of occupancy is maximum. Plot a normalized histogram of MCMC output for the optimum elevation at the average forest cover. Overlay 0.95 highest posterior density limits on the optimum elevation.
+
+## Conclusions
+
+What can you conclude about the relative importance of elevation and forest cover in controlling the bird’s distribution?
+
+\textcolor{violet}{fill this in !!!!!!!!!!!!!}
+
+## Plot the median probability of occupancy
+
+```{r}
+# View the data
+# The estimated rate of occupancy
+MCMCvis::MCMCpstr(zm, params = "p_est", func = function(x) quantile(x, c(0.025, 0.5, 0.975))) %>% 
+  as.data.frame() %>% 
+  dplyr::bind_cols(elevation_pred_z = elevation_pred_z) %>% 
+  dplyr::slice_head(n = 8)
+```
+
+Plot the median probability of occupancy and the 95% highest posterior density interval as a function of elevation at the mean of forest cover.
+
+```{r}
+# optimum elevation mean
+optimum_elevation_mean_temp <- MCMCvis::MCMCsummary(zm, params = c("optimum_elev"))[["mean"]]
+# data
+dplyr::bind_cols(
+  elevation_pred = elevation_pred
+  , median_p_est = MCMCvis::MCMCpstr(zm, params = "p_est", func = median) %>% unlist()
+  , MCMCvis::MCMCpstr(zm, params = "p_est", func = function(x) HDInterval::hdi(x, credMass = 0.95)) %>%
+      as.data.frame()
+) %>% 
+# plot
+ggplot(data = .) +
+  geom_vline(
+    mapping = aes(xintercept = optimum_elevation_mean_temp)
+    , lwd = 1
+    , color = "gray65"
+  ) +
+  annotate(
+    "text"
+    , x = optimum_elevation_mean_temp*0.75
+    , y = 0.02
+    , label = paste0("Optimum Elevation=", scales::comma(optimum_elevation_mean_temp, accuracy=1))
+    , size = 4
+  ) +
+  geom_line(
+    mapping = aes(x = elevation_pred, y = median_p_est)
+    , color = "black"
+    , lwd = 1.1
+  ) +
+  geom_line(
+    mapping = aes(x = elevation_pred, y = p_est.upper)
+    , color = "royalblue"
+    , lwd = 1
+    , linetype = "dashed"
+  ) +
+  geom_line(
+    mapping = aes(x = elevation_pred, y = p_est.lower)
+    , color = "royalblue"
+    , lwd = 1
+    , linetype = "dashed"
+  ) +
+  scale_y_continuous(breaks = scales::extended_breaks(n=10)) +
+  scale_x_continuous(breaks = scales::extended_breaks(n=10), labels = scales::comma) +
+  xlab("Elevation (m)") +
+  ylab("Occupancy Probability") +
+  labs(
+    title = "Occupancy probability as a function of elevation at mean forest cover"
+    , subtitle = "*Median of the model predictions and 95% highest posterior density intervals shown"
+  ) +
+  theme_bw() +
+  theme(
+    plot.subtitle = element_text(size = 9)
+  )
+  
+
+```
+
+## Estimate of optimum elevation
+
+Find the optimum elevation of willow tit habitat at the mean forest cover, where optimum elevation is defined as the elevation where probability of occupancy is maximum.
+
+```{r}
+# summary
+MCMCvis::MCMCsummary(zm, params = c("optimum_elev"))
+```
+
+## Plot a normalized histogram for the optimum elevation
+
+Plot a normalized histogram of MCMC output for the optimum elevation at the average forest cover. Overlay 0.95 highest posterior density limits on the optimum elevation.
+
+```{r}
+# extract data
+dta_temp <- MCMCvis::MCMCchains(zm, params = c("optimum_elev")) %>% 
+  as.data.frame()
+hdi_temp <- HDInterval::hdi(dta_temp$optimum_elev, credMass = 0.95)
+
+# the marginal posterior density of the difference
+  # plot
+  ggplot(data = dta_temp, mapping = aes(x = optimum_elev)) +
+  geom_histogram(
+    aes(y = ..density..)
+    , bins = 100
+    , fill = "navy"
+    , alpha = 0.8
+    , color = "gray25"
+  ) +
+  geom_density(
+    aes(y = ..density..)
+    , linetype = 2
+    , lwd = 1.2
+    , color = "gray10"
+  ) +
+  geom_vline(
+    xintercept = hdi_temp
+    , color = "firebrick"
+    , linetype = "dashed"
+    , lwd = 1.1
+  ) +
+  scale_x_continuous(breaks = scales::extended_breaks(n=9)) +
+  xlab("Elevation (m)") +
+  ylab("Density") +
+  labs(
+    title = "Optimum elevation of habitat at mean forest cover"
+    , caption = "95% highest posterior density interval shown in red"
+  ) +
+  theme_bw()
+  
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+remove(list = ls()[grep("_temp",ls())])
+gc()
+```
 
