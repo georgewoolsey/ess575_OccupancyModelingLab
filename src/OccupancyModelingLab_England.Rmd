@@ -122,7 +122,7 @@ g(\beta_0, \beta_1, \beta_2, \beta_3,x_i) &= \textrm{inverse logit} \bigl(\beta_
 x_1 &= \textrm{elevation}; \; x_2 = \textrm{forest cover}
 \end{align*}
 
-Utilizing a quadratic regression model with the inclusion of $x_{1i}^{2}$ in the model allows us to account for a nonlinear (e.g. parabolic) relationship between occupancy and elevation. This model form allows us to estimate the optimum elevation of willow tit habitat at the mean forest cover.
+\textcolor{violet}{Utilizing a quadratic regression model with the inclusion of $x_{1i}^{2}$ in the model allows us to account for a nonlinear (e.g. parabolic) relationship between occupancy and elevation. This model form allows us to estimate the optimum elevation of willow tit habitat at the mean forest cover.}
 
 ## Posterior and Joint:
 
@@ -152,19 +152,260 @@ x_1 &= \textrm{search time}; \; x_2 = \textrm{wind speed}
 ## Posterior and Joint:
 
 \begin{align*}
-\bigl[ \boldsymbol{z},\boldsymbol{\beta},p \mid \boldsymbol{y} \bigr] &\propto \prod_{i=1}^{n=237}\prod_{t=1}^{T} {\sf binomial} \bigr( y_{i} \mid J_{j}, \, z_{i} \cdot p\bigr) \cdot {\sf Bernoulli} \bigl(z_{i} \mid g(\boldsymbol{\beta,x_i}) \bigr) \cdot {\sf beta} \bigl(p_{it} \mid g_{2}(\boldsymbol{\alpha,x_{it}}) \bigr), \sigma^2 \bigr)\\
+\bigl[ \boldsymbol{z},\boldsymbol{\beta},\boldsymbol{\alpha},p, \sigma^{2} \mid \boldsymbol{y} \bigr] &\propto \prod_{i=1}^{n=237}\prod_{t=1}^{T} {\sf Bernoulli} \bigr( y_{i} \mid J_{j}, \, z_{i} \cdot p\bigr) \cdot {\sf Bernoulli} \bigl(z_{i} \mid g(\boldsymbol{\beta,x_i}) \bigr) \cdot {\sf beta} \bigl(p_{it} \mid g_{2}(\boldsymbol{\alpha,x_{it}}) \bigr), \sigma^2 \bigr)\\
 &\times \; \prod_{j=1}^{J=3} {\sf normal} \bigr(\boldsymbol{\beta} \mid 0, 2.7\bigr) \\ 
 &\times \; \prod_{j=1}^{J=3} {\sf normal} \bigr(\boldsymbol{\alpha} \mid 0, 2.7\bigr) \cdot {\sf uniform}\bigr(\sigma^2 \mid 0, 100 \bigl) \\ 
 \end{align*}
-
 
 # Question 4
 
 Approximate the marginal posterior distributions of parameters in the forest and elevation model with constant detection probability (the first one, above) using JAGS. Conduct posterior predictive checks. Some hints: 1) You will need to standardize the covariates by subtracting the mean and dividing by the standard deviation for each observation in the elevation and forest cover data. Use the `scale` function to do this (it will drastically speed convergence). 2) You *must* give initial values of 1 to all unknown 0 or 1 $z$ states.
 
+## Data set up 
+
+```{r}
+# mean and sd of elevation for standardizing
+mean_elevation <- mean(BayesNSF::SwissBirds$elevation)
+sd_elevation <- sd(BayesNSF::SwissBirds$elevation)
+# sequence of elevation for derived quantities
+elevation_pred <- seq(
+  round(
+    max( ## don't let elev go below 0
+      min(BayesNSF::SwissBirds$elevation) - (sd(BayesNSF::SwissBirds$elevation) * 2)
+      , 0
+    )
+    , -1
+  )
+  , round(
+    max(BayesNSF::SwissBirds$elevation) + (sd(BayesNSF::SwissBirds$elevation) * 2)
+    , -1
+  )
+  , 10
+)
+elevation_pred_z <- (elevation_pred - mean_elevation) / sd_elevation
+
+# list of data
+data = list(
+  N = nrow(BayesNSF::SwissBirds) # number sites
+  , y = as.double(BayesNSF::SwissBirds$numberDetections)
+  , elevation = scale(BayesNSF::SwissBirds$elevation) %>% as.numeric() %>% as.double
+  , forestCover = scale(BayesNSF::SwissBirds$forestCover) %>% as.numeric() %>% as.double
+  , n = as.double(BayesNSF::SwissBirds$numberVisits)
+  , mean_elevation = mean_elevation
+  , sd_elevation = sd_elevation
+)
+```
+
+## JAGS Model
+
+Write out the JAGS code for the model.
+
+```{r, eval=FALSE}
+## JAGS Model
+model{
+  # priors
+  b0 ~ dnorm(0, (1/2.7)) # dnorm(mu = mean, tau= precision )
+  b1 ~ dnorm(0, (1/2.7))
+  b2 ~ dnorm(0, (1/2.7))
+  b3 ~ dnorm(0, (1/2.7))
+  p ~ dunif(0, 1)
+  # likelihood
+  for(i in 1:N){
+    # deterministic model
+    psi[i] <- ilogit(
+       b0
+       + b1*elevation[i]
+       + b2*(elevation[i]^2)
+       + b3*forestCover[i]
+    )
+    # Deterministic model of z (the true probability of occupancy)
+      z[i] ~ dbern(psi[i])
+    # likelihood
+      # Stochastic model of y (the observed detections)
+      y[i] ~ dbin(z[i] * p, n[i])
+      y_sim[i]  ~ dbin(z[i] * p, n[i])
+  }
+  # Derived quantities
+    # optimum elevation of willow tit habitat at the mean forest cover
+      # ... where optimum elevation is defined as the elevation 
+      # ... where probability of occupancy is maximum.
+      # f(x) = ax^2 + bx + c
+      # x-value of the vertex of the parabola = -b/2a 
+      optimum_elev_z = -b1/(2*b2)
+      optimum_elev = (optimum_elev_z * sd_elevation) + mean_elevation
+    #posterior predictive checks
+      mean_y = mean(y)
+      sd_y = sd(y)
+      mean_y_sim = mean(y_sim)
+      sd_y_sim = sd(y_sim)
+      p_val_mean = step(mean_y_sim - mean_y)
+      p_val_sd = step(sd_y_sim - sd_y)
+    # sum of squares 
+      for(j in 1:N) {
+        sq[j] <- (y[j]-psi[j])^2
+        sq_sim[j] <- (y_sim[j]-psi[j])^2
+      }
+      fit_y <- sum(sq)
+      fit_y_sim <- sum(sq_sim)
+      p_val_fit = step(fit_y_sim - fit_y)
+}
+```
+
+## Implement JAGS Model
+
+```{r}
+##################################################################
+# insert JAGS model code into an R script
+##################################################################
+{ # Extra bracket needed only for R markdown files - see answers
+  sink("BirdOccupancyJAGS.R") # This is the file name for the jags code
+  cat("
+  model{
+    # priors
+    b0 ~ dnorm(0, (1/2.7)) # dnorm(mu = mean, tau= precision )
+    b1 ~ dnorm(0, (1/2.7))
+    b2 ~ dnorm(0, (1/2.7))
+    b3 ~ dnorm(0, (1/2.7))
+    p ~ dunif(0, 1)
+    # likelihood
+    for(i in 1:N){
+      # deterministic model
+      psi[i] <- ilogit(
+         b0
+         + b1*elevation[i]
+         + b2*(elevation[i]^2)
+         + b3*forestCover[i]
+      )
+      # Deterministic model of z (the true probability of occupancy)
+        z[i] ~ dbern(psi[i])
+      # likelihood
+        # Stochastic model of y (the observed detections)
+        y[i] ~ dbin(z[i] * p, n[i])
+        y_sim[i]  ~ dbin(z[i] * p, n[i])
+    }
+    # Derived quantities
+      #posterior predictive checks
+        mean_y = mean(y)
+        sd_y = sd(y)
+        mean_y_sim = mean(y_sim)
+        sd_y_sim = sd(y_sim)
+        p_val_mean = step(mean_y_sim - mean_y)
+        p_val_sd = step(sd_y_sim - sd_y)
+      # sum of squares 
+        for(j in 1:N) {
+          sq[j] <- (y[j]-psi[j])^2
+          sq_sim[j] <- (y_sim[j]-psi[j])^2
+        }
+        fit_y <- sum(sq)
+        fit_y_sim <- sum(sq_sim)
+        p_val_fit = step(fit_y_sim - fit_y)
+  }
+  ", fill = TRUE)
+  sink()
+}
+################################################################
+# implement model
+##################################################################
+# specify the initial conditions for the MCMC chain 
+inits = list(
+  list(
+    b0 = runif(n = 1, min = -3, max = 3)
+    , b1 = runif(n = 1, min = -3, max = 3)
+    , b2 = runif(n = 1, min = -3, max = 3)
+    , b3 = runif(n = 1, min = -3, max = 3)
+    , p = runif(n = 1, min = 0, max = 1)
+    , z = rep(1, nrow(BayesNSF::SwissBirds))
+  )
+  , list(
+    b0 = runif(n = 1, min = -3, max = 3)
+    , b1 = runif(n = 1, min = -3, max = 3)
+    , b2 = runif(n = 1, min = -3, max = 3)
+    , b3 = runif(n = 1, min = -3, max = 3)
+    , p = runif(n = 1, min = 0, max = 1)
+    , z = rep(1, nrow(BayesNSF::SwissBirds))
+  )
+  , list(
+    b0 = runif(n = 1, min = -3, max = 3)
+    , b1 = runif(n = 1, min = -3, max = 3)
+    , b2 = runif(n = 1, min = -3, max = 3)
+    , b3 = runif(n = 1, min = -3, max = 3)
+    , p = runif(n = 1, min = 0, max = 1)
+    , z = rep(1, nrow(BayesNSF::SwissBirds))
+  )
+)
+# specify 3 scalars, n.adapt, n.update, and n.iter
+# n.adapt = number of iterations that JAGS will use to choose the sampler 
+  # and to assure optimum mixing of the MCMC chain
+n.adapt = 1000
+# n.update = number of iterations that will be discarded to allow the chain to 
+#   converge before iterations are stored (aka, burn-in)
+n.update = 10000
+# n.iter = number of iterations that will be stored in the 
+  # final chain as samples from the posterior distribution
+n.iter = 10000
+######################
+# Call to JAGS
+######################
+jm = rjags::jags.model(
+  file = "BirdOccupancyJAGS.R"
+  , data = data
+  , inits = inits
+  , n.chains = length(inits)
+  , n.adapt = n.adapt
+)
+stats::update(jm, n.iter = n.update, progress.bar = "none")
+# save the coda object (more precisely, an mcmc.list object) to R as "zm"
+zm = rjags::coda.samples(
+  model = jm
+  , variable.names = c(
+      "b0"
+      , "b1"
+      , "b2"
+      , "b3"
+      , "mean_y"
+      , "sd_y"
+      , "mean_y_sim"
+      , "sd_y_sim"
+      , "p_val_mean"
+      , "p_val_sd"
+      , "fit_y"
+      , "fit_y_sim"
+      , "p_val_fit"
+    )
+  , n.iter = n.iter
+  , n.thin = 1
+  , progress.bar = "none"
+)
+#####################
+# check output
+#####################
+# summary
+MCMCvis::MCMCsummary(zm, params = c(
+      "b0"
+      , "b1"
+      , "b2"
+      , "b3"
+      , "mean_y"
+      , "mean_y_sim"
+      , "p_val_mean"
+      , "sd_y"
+      , "sd_y_sim"
+      , "p_val_sd"
+      , "fit_y"
+      , "fit_y_sim"
+      , "p_val_fit"
+    )
+  )
+```
+
 # Question 5
 
 Summarize the parameters and check chains for convergence. Exclude the predictions of $\psi$ from the summary if they were included in the coda object. What can you conclude about model fit?
+
+```{r}
+# asdf
+```
+
 
 # Question 6
 
