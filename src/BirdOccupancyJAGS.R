@@ -52,7 +52,7 @@
                b0
                + b1*elevation_pred_z[j]
                + b2*(elevation_pred_z[j]^2)
-               # + b3*mean_forestCover
+               # + b3*mean_forestCover # i don't know why including this produces incorrect estimates
             )
         }
   }

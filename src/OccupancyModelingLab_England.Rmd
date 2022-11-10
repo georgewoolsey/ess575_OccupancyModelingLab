@@ -258,7 +258,7 @@ model{
              b0
              + b1*elevation_pred_z[j]
              + b2*(elevation_pred_z[j]^2)
-             # + b3*mean_forestCover
+             # + b3*mean_forestCover # i don't know why including this produces incorrect estimates
           )
       }
 }
@@ -326,7 +326,7 @@ model{
                b0
                + b1*elevation_pred_z[j]
                + b2*(elevation_pred_z[j]^2)
-               # + b3*mean_forestCover
+               # + b3*mean_forestCover # i don't know why including this produces incorrect estimates
             )
         }
   }
@@ -439,8 +439,6 @@ MCMCvis::MCMCtrace(zm, params = c(
     , "p_val_mean"
     , "p_val_sd"
     , "p_val_fit"
-    # derived quantities
-    , "optimum_elev"
   )
   , pdf = FALSE
 )
@@ -483,7 +481,6 @@ MCMCvis::MCMCsummary(zm, params = c(
 MCMCvis::MCMCsummary(zm, params = c("b0", "b1", "b2", "b3", "p"))
 ```
 
-
 ## Caterpillar plot for the  $\boldsymbol{\beta}$ and detection probability $p$
 
 ```{r}
@@ -492,14 +489,20 @@ MCMCvis::MCMCplot(
   zm
   , params = c("b0", "b1", "b2", "b3", "p")
   , horiz = TRUE
-  # , ylim = c(-6,5)
 )
-
 ```
+
+## Gelman-Rubin diagnostic
+
+```{r, results='hide'}
+# Heidelberger and Welch diagnostic
+coda::heidel.diag(zm)
+```
+
 
 What can you conclude about model fit?
 
-\textcolor{violet}{fill this in !!!!!!!!!!!!!}
+\textcolor{violet}{Based on visual inspection of the trace plot the chains have converged. There is evidence of sufficient convergence of the $\boldsymbol{\beta}$ parameters. The values for Rhat near 1 in the summary table suggest convergence while the effective sample sizes are not too small.  The Heidelberger and Welch diagnostic yields a "passed" half-width test.}
 
 # Question 6
 
@@ -509,7 +512,7 @@ What can you conclude about the relative importance of elevation and forest cove
 
 What can you conclude about the relative importance of elevation and forest cover in controlling the bird’s distribution?
 
-\textcolor{violet}{fill this in !!!!!!!!!!!!!}
+\textcolor{violet}{The covariate with the greatest effect on occupancy is elevation ($\beta_1 = $ `r MCMCvis::MCMCsummary(zm, params = c("b1"))[[1]] %>% scales::comma(accuracy = 0.001)`). The coefficient estimate of the impact of forest cover on occupancy ($\beta_3 = $ `r MCMCvis::MCMCsummary(zm, params = c("b3"))[[1]] %>% scales::comma(accuracy = 0.001)`) is approximately half as large in absolute value as the coefficent on elevation. Relative effect can be inferred by the absolute value of the coefficient estimates because the predictor data was standardized.}
 
 ## Plot the median probability of occupancy
 
@@ -600,7 +603,7 @@ dta_temp <- MCMCvis::MCMCchains(zm, params = c("optimum_elev")) %>%
   as.data.frame()
 hdi_temp <- HDInterval::hdi(dta_temp$optimum_elev, credMass = 0.95)
 
-# the marginal posterior density of the difference
+# the marginal posterior density of occupancy
   # plot
   ggplot(data = dta_temp, mapping = aes(x = optimum_elev)) +
   geom_histogram(
@@ -622,7 +625,11 @@ hdi_temp <- HDInterval::hdi(dta_temp$optimum_elev, credMass = 0.95)
     , linetype = "dashed"
     , lwd = 1.1
   ) +
-  scale_x_continuous(breaks = scales::extended_breaks(n=9)) +
+  scale_x_continuous(
+    breaks = scales::extended_breaks(n=9)
+    , limits = c(min(elevation_pred), max(elevation_pred))
+    , labels = scales::comma
+  ) +
   xlab("Elevation (m)") +
   ylab("Density") +
   labs(
